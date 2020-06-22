@@ -17,16 +17,18 @@ import GroupService from '../../../services/group.service';
 import NotificationService from '../../../services/notification.service';
 import UserService from '../../../services/user.service';
 import RoleService from '../../../services/role.service';
+import { IScope } from 'angular';
+import { StateService } from '@uirouter/core';
 import _ = require('lodash');
-import {IScope} from 'angular';
-import {StateService} from '@uirouter/core';
 
 interface IUserDetailComponentScope extends ng.IScope {
   selectedOrganizationRole: string[];
-  selectedEnvironmentRole: string[];
+  selectedEnvironmentRole: any;
   userApis: any[];
   userApplications: any[];
+  userEnvironments: any[];
 }
+
 const UserDetailComponent: ng.IComponentOptions = {
   bindings: {
     selectedUser: '<',
@@ -34,7 +36,8 @@ const UserDetailComponent: ng.IComponentOptions = {
     organizationRoles: '<',
     environmentRoles: '<',
     apiRoles: '<',
-    applicationRoles: '<'
+    applicationRoles: '<',
+    environments: '<'
   },
   template: require('./user.html'),
   controller: function (
@@ -52,7 +55,11 @@ const UserDetailComponent: ng.IComponentOptions = {
     this.$rootScope = $rootScope;
     this.$onInit = () => {
       $scope.selectedOrganizationRole = _.map(_.filter(this.selectedUser.roles, role => role.scope === 'organization'), role => role.id);
-      $scope.selectedEnvironmentRole = _.map(_.filter(this.selectedUser.roles, role => role.scope === 'environment'), role => role.id);
+      let envRoles = {};
+      Object.keys(this.selectedUser.envRoles).forEach(envId => {
+        envRoles[envId] = _.map(this.selectedUser.envRoles[envId], role => role.id);
+      });
+      $scope.selectedEnvironmentRole = envRoles;
       $scope.userApis = [];
       $scope.userApplications = [];
     };
@@ -73,9 +80,9 @@ const UserDetailComponent: ng.IComponentOptions = {
           title: 'Are you sure you want to remove the user from the group "' + group.name + '"?',
           confirmButton: 'Remove'
         }
-      }).then( (response) => {
+      }).then((response) => {
         if (response) {
-          GroupService.deleteMember(group.id, this.selectedUser.id).then( () => {
+          GroupService.deleteMember(group.id, this.selectedUser.id).then(() => {
             NotificationService.show(this.selectedUser.displayName + ' has been removed from the group "' + group.name + '"');
             UserService.getUserGroups(this.selectedUser.id).then((response) =>
               this.groups = response.data
@@ -104,34 +111,22 @@ const UserDetailComponent: ng.IComponentOptions = {
 
     this.updateOrganizationsRole = (selectOpened: boolean, organizationRoles: any[]) => {
       if (selectOpened) {
-        let newRoles = [];
-        if ($scope.selectedEnvironmentRole && $scope.selectedEnvironmentRole.length > 0) {
-          newRoles = _.concat($scope.selectedEnvironmentRole, organizationRoles);
-        } else {
-          newRoles = organizationRoles;
-        }
-
-        UserService.updateUserRoles(this.selectedUser.id, newRoles);
-        NotificationService.show('Organization Role updated');
+        UserService.updateUserRoles(this.selectedUser.id, 'ORGANIZATION', 'DEFAULT', organizationRoles);
+        NotificationService.show('Roles for organization "DEFAULT" updated');
       }
     };
 
-    this.updateEnvironmentsRole = (selectOpened: boolean, environmentRoles: any[]) => {
+    this.updateEnvironmentsRole = (selectOpened: boolean, envId: string, environmentRoles: any[]) => {
+      console.log($scope.selectedEnvironmentRole);
       if (selectOpened) {
-        let newRoles = [];
-        if ($scope.selectedOrganizationRole && $scope.selectedOrganizationRole.length > 0) {
-          newRoles = _.concat($scope.selectedOrganizationRole, environmentRoles);
-        } else {
-          newRoles = environmentRoles;
-        }
-        UserService.updateUserRoles(this.selectedUser.id, newRoles);
-        NotificationService.show('Environment Role updated');
+        UserService.updateUserRoles(this.selectedUser.id, 'ENVIRONMENT', envId, environmentRoles);
+        NotificationService.show('Roles for environment "' + envId + '" updated');
       }
     };
 
     this.addGroupDialog = () => {
       let that = this;
-      GroupService.list().then( (groups) => {
+      GroupService.list().then((groups) => {
         $mdDialog.show({
           controller: 'DialogAddUserGroupController',
           controllerAs: 'dialogCtrl',
@@ -159,9 +154,9 @@ const UserDetailComponent: ng.IComponentOptions = {
           msg: 'An email with a link to change it will be sent to him',
           confirmButton: 'Reset'
         }
-      }).then( (response) => {
+      }).then((response) => {
         if (response) {
-          UserService.resetPassword(this.selectedUser.id).then( () => {
+          UserService.resetPassword(this.selectedUser.id).then(() => {
             NotificationService.show('The password of user "' + this.selectedUser.displayName + '" has been successfully reset');
           });
         }
@@ -169,10 +164,10 @@ const UserDetailComponent: ng.IComponentOptions = {
     };
 
     this.loadUserApis = () => {
-      UserService.getMemberships(this.selectedUser.id, 'api').then( (response) => {
+      UserService.getMemberships(this.selectedUser.id, 'api').then((response) => {
           let newApiList = [];
           _.forEach(response.data.metadata, (apiMetadata: any, apiId: string) => {
-            newApiList.push( {
+            newApiList.push({
               id: apiId,
               name: apiMetadata.name,
               version: apiMetadata.version,
@@ -185,7 +180,7 @@ const UserDetailComponent: ng.IComponentOptions = {
     };
 
     this.loadUserApplications = () => {
-      UserService.getMemberships(this.selectedUser.id, 'application').then( (response) => {
+      UserService.getMemberships(this.selectedUser.id, 'application').then((response) => {
           let newAppList = [];
           _.forEach(response.data.metadata, (appMetadata: any, appId: string) => {
             if (!appMetadata.status || appMetadata.status !== 'archived') {
@@ -201,10 +196,21 @@ const UserDetailComponent: ng.IComponentOptions = {
       );
     };
 
+    this.loadUserEnvironments = () => {
+      let userEnvironments = [];
+      Object.keys(this.selectedUser.envRoles).forEach(env => {
+        userEnvironments.push({
+          name: env,
+          roles: _.map(this.selectedUser.envRoles[env], role => role.name).join(', ')
+        })
+      });
+      $scope.userEnvironments = userEnvironments;
+    };
+
     this.backToUsers = () => {
       let page = $window.localStorage.usersTablePage || 1;
       let query = $window.localStorage.usersTableQuery || undefined;
-      $state.go('management.settings.users', {q: query, page: page});
+      $state.go('management.settings.users', { q: query, page: page });
     };
   }
 };
